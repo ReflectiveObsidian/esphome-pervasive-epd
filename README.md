@@ -51,10 +51,6 @@ the number red above a threshold. It redraws only when:
   10 minutes. It then shows "No data since HH:MM" once, and clears it when
   data returns.
 
-> **Fonts:** setting `glyphs:` on a font *replaces* ESPHome's default
-> character set. Add `glyphsets: [GF_Latin_Kernel]` as well, or every
-> character not in your `glyphs:` list is drawn as a box.
-
 ## Options
 
 | Option | Default | Notes |
