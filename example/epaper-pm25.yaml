@@ -55,6 +55,31 @@ sensor:
   - platform: homeassistant
     id: pm25
     entity_id: ${ha_entity}
+    # Named so you can see in HA (device page, Diagnostic) whether the value arrives.
+    name: "PM2.5 received"
+    entity_category: diagnostic
+    unit_of_measurement: "µg/m³"
+    accuracy_decimals: 1
+    on_value:
+      - logger.log:
+          level: INFO
+          format: "PM2.5 from Home Assistant: %.1f"
+          args: [x]
+      # First reading after boot: draw it now instead of waiting for the interval.
+      - if:
+          condition:
+            lambda: return std::isnan(id(shown_pm)) && !std::isnan(x);
+          then:
+            - script.execute: draw_now
+
+script:
+  - id: draw_now
+    mode: single
+    then:
+      - lambda: |-
+          id(shown_pm) = id(pm25).state;
+          id(last_draw_ms) = millis();
+      - component.update: epd   # if a refresh is running, the driver queues this one
 
 globals:
   - id: shown_pm          # value currently on the screen (NAN = nothing yet)
@@ -87,10 +112,7 @@ interval:
               const float diff = fabsf(v - shown);
               return category(v) != category(shown) || diff >= ${min_change} || (diff >= 1.0f && age_s >= 1800);
           then:
-            - lambda: |-
-                id(shown_pm) = id(pm25).state;
-                id(last_draw_ms) = millis();
-            - component.update: epd
+            - script.execute: draw_now
 
 # ---------------------------------------------------------------------------
 # Fonts (downloaded from Google Fonts at compile time)
@@ -185,7 +207,4 @@ button:
     name: "Refresh display"
     entity_category: config
     on_press:
-      - lambda: |-
-          if (id(pm25).has_state()) id(shown_pm) = id(pm25).state;
-          id(last_draw_ms) = millis();
-      - component.update: epd
+      - script.execute: draw_now
