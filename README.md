@@ -9,8 +9,11 @@ It was written for an ESP32-S3 price-tag board (silkscreen "epaper 2.13br",
 board ID A0726) fitted with an **SE2213JS0E3** panel: 2.13", 212 x 104,
 black/white/red.
 
-> **Status:** logic verified in simulation against Pervasive's reference
-> command sequence. Not yet confirmed on real hardware.
+## Test Hardware
+
+<img width="2864" height="1653" alt="IMG_20261020_192707839 (1)" src="https://github.com/user-attachments/assets/affe3356-d6ad-45d3-85f3-119dae03603c" />
+<img width="3499" height="1985" alt="IMG_20261020_192721555 (1)" src="https://github.com/user-attachments/assets/2b7aac51-79cf-40e2-a03c-38c5e4fd060d" />
+Sourced from: https://item.taobao.com/item.htm?id=1084689286790
 
 ## Usage
 
