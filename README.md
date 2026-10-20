@@ -40,9 +40,13 @@ display:
 ```
 
 A full config is in [`example/epaper-pm25.yaml`](example/epaper-pm25.yaml).
-It shows a PM2.5 reading from Home Assistant with its EPA category, turns the
-number red above a threshold, and only redraws when the reading changes
-meaningfully.
+It shows a PM2.5 reading from Home Assistant with its EPA category, and turns
+the number red above a threshold. It redraws only when:
+
+- the reading moves by more than 5%, at most once every 5 minutes, or
+- Home Assistant has been unreachable, or the sensor unavailable, for
+  10 minutes. It then shows "No data since HH:MM" once, and clears it when
+  data returns.
 
 > **Fonts:** setting `glyphs:` on a font *replaces* ESPHome's default
 > character set. Add `glyphsets: [GF_Latin_Kernel]` as well, or every
