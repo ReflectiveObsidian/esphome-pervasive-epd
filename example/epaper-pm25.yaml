@@ -1,0 +1,191 @@
+# ESP32-S3 price-tag board + Pervasive Displays 2.13" black/white/red e-paper
+# Shows a PM2.5 reading from Home Assistant.
+#
+# A full refresh of this tri-colour panel takes ~15-20 s and flashes the screen,
+# so the display only redraws when the reading changes meaningfully (see the
+# interval: block), not on every sensor update.
+
+substitutions:
+  ha_entity: sensor.pm2_5                        # the HA entity to show
+  title: "PM2.5"                                # static text in the title bar
+  warn_level: "35.5"      # µg/m³ at which the number turns red (EPA "unhealthy for sensitive groups")
+  min_change: "3"         # µg/m³ change needed before redrawing
+  min_refresh_s: "180"    # never redraw more often than this (seconds)
+
+esphome:
+  name: epaper-pm25
+  friendly_name: E-Paper PM2.5
+  on_boot:
+    priority: -100
+    then:
+      - component.update: epd   # shows "Waiting for data..." until the first reading
+
+esp32:
+  variant: esp32s3
+  framework:
+    type: esp-idf
+
+external_components:
+  - source: github://ReflectiveObsidian/esphome-pervasive-epd@main
+    components: [pervasive_epd]
+
+logger:
+
+# Keep the api:, ota: and wifi: blocks ESPHome Builder generated for your device.
+api:
+  encryption:
+    key: "PASTE_THE_KEY_ESPHOME_BUILDER_GENERATED"
+
+ota:
+  - platform: esphome
+    encryption:
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+time:
+  - platform: homeassistant
+    id: ha_time
+
+# ---------------------------------------------------------------------------
+# PM2.5 from Home Assistant
+# ---------------------------------------------------------------------------
+sensor:
+  - platform: homeassistant
+    id: pm25
+    entity_id: ${ha_entity}
+
+globals:
+  - id: shown_pm          # value currently on the screen (NAN = nothing yet)
+    type: float
+    initial_value: "NAN"
+  - id: last_draw_ms
+    type: uint32_t
+    initial_value: "0"
+
+# Decide every 15 s whether the screen is worth refreshing.
+# Redraw when: first reading arrives, OR the EPA category changes, OR the value
+# moved by min_change, OR it moved at all and the screen is 30 min old.
+# Never more often than min_refresh_s.
+interval:
+  - interval: 15s
+    then:
+      - if:
+          condition:
+            lambda: |-
+              if (id(epd).is_updating()) return false;
+              if (!id(pm25).has_state() || std::isnan(id(pm25).state)) return false;
+              const float v = id(pm25).state;
+              const float shown = id(shown_pm);
+              if (std::isnan(shown)) return true;
+              const uint32_t age_s = (millis() - id(last_draw_ms)) / 1000;
+              if (age_s < ${min_refresh_s}) return false;
+              auto category = [](float x) {
+                return x <= 9.0f ? 0 : x <= 35.4f ? 1 : x <= 55.4f ? 2 : x <= 125.4f ? 3 : x <= 225.4f ? 4 : 5;
+              };
+              const float diff = fabsf(v - shown);
+              return category(v) != category(shown) || diff >= ${min_change} || (diff >= 1.0f && age_s >= 1800);
+          then:
+            - lambda: |-
+                id(shown_pm) = id(pm25).state;
+                id(last_draw_ms) = millis();
+            - component.update: epd
+
+# ---------------------------------------------------------------------------
+# Fonts (downloaded from Google Fonts at compile time)
+# Listing glyphs: replaces ESPHome's default character set, so each font
+# names exactly what it needs.
+# ---------------------------------------------------------------------------
+font:
+  - file:
+      type: gfonts
+      family: Roboto
+      weight: bold
+    id: font_big
+    size: 50
+    glyphs: ["0123456789.-"]          # big font only ever shows the number
+  - file:
+      type: gfonts
+      family: Roboto
+      weight: bold
+    id: font_small
+    size: 16
+    glyphsets: [GF_Latin_Kernel]      # letters, digits, punctuation
+    glyphs: ["µ³"]                    # plus the unit symbols
+
+# ---------------------------------------------------------------------------
+# Display
+# ---------------------------------------------------------------------------
+spi:
+  clk_pin: GPIO12    # header SCLK
+  mosi_pin: GPIO11   # header SDI
+
+display:
+  - platform: pervasive_epd
+    id: epd
+    model: 2.13in
+    cs_pin: GPIO10      # header CS
+    dc_pin: GPIO13      # header D/C
+    reset_pin: GPIO14   # header RST
+    busy_pin: GPIO15    # header BUSY
+    rotation: 90        # landscape 212 x 104. Use 270 if upside down.
+    update_interval: never   # refreshed by on_boot and the interval above
+    lambda: |-
+      const auto RED = Color(255, 0, 0);
+      const int W = it.get_width(), H = it.get_height();
+      it.fill(Color::WHITE);
+
+      // --- title bar: label left, time of this refresh right ---
+      it.filled_rectangle(0, 0, W, 22, Color::BLACK);
+      it.print(5, 11, id(font_small), Color::WHITE, TextAlign::CENTER_LEFT, "${title}");
+      auto now = id(ha_time).now();
+      if (now.is_valid())
+        it.strftime(W - 5, 11, id(font_small), Color::WHITE, TextAlign::CENTER_RIGHT, "%H:%M", now);
+
+      const float v = id(shown_pm);
+      if (std::isnan(v)) {
+        it.print(W / 2, 52, id(font_small), Color::BLACK, TextAlign::CENTER, "Waiting for data...");
+        return;
+      }
+
+      // --- reading: number + unit, red from warn_level up ---
+      const Color ink = v >= ${warn_level} ? RED : Color::BLACK;
+      it.printf(132, 74, id(font_big), ink, TextAlign::BASELINE_RIGHT, "%.0f", v);
+      it.print(137, 74, id(font_small), Color::BLACK, TextAlign::BASELINE_LEFT, "µg/m³");
+
+      // --- EPA category along the bottom ---
+      static const char *const NAMES[] = {"Good", "Moderate", "Unhealthy (sensitive)",
+                                          "Unhealthy", "Very unhealthy", "Hazardous"};
+      const int cat = v <= 9.0f ? 0 : v <= 35.4f ? 1 : v <= 55.4f ? 2 : v <= 125.4f ? 3 : v <= 225.4f ? 4 : 5;
+      it.horizontal_line(0, H - 22, W, Color::BLACK);
+      it.print(5, H - 11, id(font_small), ink, TextAlign::CENTER_LEFT, NAMES[cat]);
+
+# ---------------------------------------------------------------------------
+# Experiment: refresh speed vs. panel temperature setting (see chat)
+# Both appear under the device's Configuration section in Home Assistant.
+# ---------------------------------------------------------------------------
+number:
+  - platform: template
+    name: "Panel temperature"
+    id: panel_temp
+    entity_category: config
+    unit_of_measurement: "°C"
+    min_value: 0
+    max_value: 40
+    step: 1
+    initial_value: 25
+    optimistic: true
+    restore_value: true
+    on_value:
+      - lambda: id(epd).set_temperature((uint8_t) x);
+
+button:
+  - platform: template
+    name: "Refresh display"
+    entity_category: config
+    on_press:
+      - lambda: |-
+          if (id(pm25).has_state()) id(shown_pm) = id(pm25).state;
+          id(last_draw_ms) = millis();
+      - component.update: epd

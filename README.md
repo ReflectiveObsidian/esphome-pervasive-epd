@@ -39,8 +39,14 @@ display:
       it.print(6, 12, id(my_font), Color::WHITE, TextAlign::CENTER_LEFT, "Hello");
 ```
 
-A full config, which shows a Home Assistant sensor value under a red title
-bar, is in [`example/epaper-label.yaml`](example/epaper-label.yaml).
+A full config is in [`example/epaper-pm25.yaml`](example/epaper-pm25.yaml).
+It shows a PM2.5 reading from Home Assistant with its EPA category, turns the
+number red above a threshold, and only redraws when the reading changes
+meaningfully.
+
+> **Fonts:** setting `glyphs:` on a font *replaces* ESPHome's default
+> character set. Add `glyphsets: [GF_Latin_Kernel]` as well, or every
+> character not in your `glyphs:` list is drawn as a box.
 
 ## Options
 
