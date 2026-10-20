@@ -1,0 +1,142 @@
+# ESP32-S3 "epaper 2.13br" price-tag board (board ID A0726) -> ESPHome / Home Assistant
+#
+# Hardware (identified from the PCB and panel label):
+#  - ESP32-S3-WROOM-1, native USB on the USB-C port
+#  - Panel: Pervasive Displays SE2213JS0E3, 2.13" black/white/red "Spectra", 212 x 104
+#    (iTC controller - not supported by ESPHome's built-in e-paper drivers, so this
+#    config pulls in the pervasive_epd external component from GitHub)
+#  - Panel signals traced on the 2x4 header: SCLK=12 SDI=11 CS=10 D/C=13 RST=14 BUSY=15
+#
+# Setup:
+#  1. In ESPHome Builder, create the device, then replace its YAML with this one,
+#     keeping the api: and ota: blocks Builder generated. Nothing else to copy:
+#     ESPHome downloads the driver from GitHub when it compiles.
+#  2. First flash over USB: hold BOOT, tap RST, release BOOT, then
+#     Install -> "Plug into this computer". After that, updates go over Wi-Fi.
+
+substitutions:
+  ha_entity: sensor.living_room_temperature   # the HA entity to show
+  title: "LIVING ROOM"                        # static text in the red bar
+  footer: "Home Assistant"                    # static text at the bottom
+
+esphome:
+  name: epaper-label
+  friendly_name: E-Paper Label
+  on_boot:
+    priority: -100
+    then:
+      - component.update: epd   # draw once at boot
+
+external_components:
+  - source: github://ReflectiveObsidian/esphome-pervasive-epd@main
+    components: [pervasive_epd]
+
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: esp-idf
+
+logger:
+
+# Keep the api: and ota: blocks ESPHome Builder generated for this device.
+api:
+  encryption:
+    key: "PASTE_THE_KEY_ESPHOME_BUILDER_GENERATED"
+
+ota:
+  - platform: esphome
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+# ---------------------------------------------------------------------------
+# Value from Home Assistant
+# ---------------------------------------------------------------------------
+sensor:
+  - platform: homeassistant
+    id: ha_value
+    entity_id: ${ha_entity}
+    on_value:
+      then:
+        - lambda: id(needs_redraw) = true;
+
+globals:
+  - id: needs_redraw
+    type: bool
+    initial_value: "false"
+
+# A tri-colour refresh takes ~15 s and flashes the whole panel, so redraw at
+# most once every 3 minutes, and only if the value changed.
+interval:
+  - interval: 3min
+    then:
+      - if:
+          condition:
+            lambda: return id(needs_redraw);
+          then:
+            - lambda: id(needs_redraw) = false;
+            - component.update: epd
+
+# ---------------------------------------------------------------------------
+# Fonts (downloaded from Google Fonts at compile time)
+# ---------------------------------------------------------------------------
+font:
+  - file:
+      type: gfonts
+      family: Roboto
+      weight: bold
+    id: font_big
+    size: 40
+    glyphs: ["°"]   # added on top of the default Latin set
+  - file:
+      type: gfonts
+      family: Roboto
+      weight: bold
+    id: font_small
+    size: 16
+    glyphs: ["°"]
+
+# ---------------------------------------------------------------------------
+# Display: Pervasive Displays 2.13" Spectra (black/white/red)
+# ---------------------------------------------------------------------------
+spi:
+  clk_pin: GPIO12    # header SCLK
+  mosi_pin: GPIO11   # header SDI
+
+display:
+  - platform: pervasive_epd
+    id: epd
+    model: 2.13in
+    cs_pin: GPIO10      # header CS
+    dc_pin: GPIO13      # header D/C
+    reset_pin: GPIO14   # header RST
+    busy_pin: GPIO15    # header BUSY (LOW = busy on these panels)
+    rotation: 90        # landscape 212 x 104. Use 270 if upside down.
+    update_interval: never   # refreshed by on_boot and the interval above
+    # Only if the image comes out wrong:
+    # mirror_x: true          # text mirrored left/right
+    # mirror_y: true          # text mirrored top/bottom
+    # psr: [0xCF, 0x8D]       # panel settings; this is Pervasive's default for 2.13"
+    # temperature: 25         # ambient C used to pick the refresh waveform
+    lambda: |-
+      const auto RED = Color(255, 0, 0);
+      it.fill(Color::WHITE);
+
+      // --- red title bar with white text ---
+      it.filled_rectangle(0, 0, it.get_width(), 24, RED);
+      it.print(6, 12, id(font_small), Color::WHITE, TextAlign::CENTER_LEFT, "${title}");
+
+      // --- entity value, centred ---
+      if (id(ha_value).has_state()) {
+        it.printf(it.get_width() / 2, 58, id(font_big), Color::BLACK,
+                  TextAlign::CENTER, "%.1f°C", id(ha_value).state);
+      } else {
+        it.print(it.get_width() / 2, 58, id(font_small), Color::BLACK,
+                 TextAlign::CENTER, "Waiting for HA...");
+      }
+
+      // --- static footer ---
+      it.horizontal_line(0, it.get_height() - 22, it.get_width(), Color::BLACK);
+      it.print(6, it.get_height() - 3, id(font_small), Color::BLACK,
+               TextAlign::BOTTOM_LEFT, "${footer}");
